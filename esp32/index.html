@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PureFlow AI — Water Quality Dashboard</title>
+  <title>PureFlow AI — Predictive Maintenance</title>
 
   <!-- Google Fonts used in style.css -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -16,6 +16,49 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+
+  <!-- ══════════════════════════════
+       CONNECTION GATE OVERLAY
+       Blocks the dashboard until ESP32 is validated.
+       Controlled by app.js — see SKIP_CONNECTION_CHECK flag.
+  ══════════════════════════════ -->
+  <div id="connection-gate">
+    <div class="gate-card">
+      <div class="gate-logo">💧</div>
+      <div class="gate-title">PureFlow AI</div>
+      <div class="gate-subtitle">Predictive Maintenance</div>
+
+      <!-- State: Checking connection (default visible) -->
+      <div id="gate-checking" class="gate-state">
+        <div class="gate-spinner"></div>
+        <div class="gate-status">Searching for ESP32 device…</div>
+        <div class="gate-ip" id="gate-ip-label">Target: <span id="gate-ip-value"></span></div>
+      </div>
+
+      <!-- State: Connection failed (hidden by default) -->
+      <div id="gate-failed" class="gate-state" style="display:none;">
+        <div class="gate-error-icon">⚠️</div>
+        <div class="gate-status gate-status-fail">ESP32 Not Found</div>
+        <div class="gate-error-desc">
+          Could not reach the ESP32 device. Make sure:<br/>
+          • The ESP32 is powered on and connected to WiFi<br/>
+          • You are on the same network as the ESP32<br/>
+          • The IP address is correct
+        </div>
+        <div class="gate-actions">
+          <button id="gate-retry-btn" class="gate-btn gate-btn-primary">Retry Connection</button>
+          <button id="gate-skip-btn" class="gate-btn gate-btn-secondary">Skip — Open Dashboard Anyway</button>
+        </div>
+      </div>
+
+      <!-- State: Connected (hidden by default, shown briefly before transition) -->
+      <div id="gate-success" class="gate-state" style="display:none;">
+        <div class="gate-success-icon">✅</div>
+        <div class="gate-status gate-status-ok">ESP32 Connected</div>
+        <div class="gate-status-sub">Launching dashboard…</div>
+      </div>
+    </div>
+  </div>
 
   <!-- ══════════════════════════════
        SIDEBAR
