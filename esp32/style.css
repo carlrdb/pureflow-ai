@@ -11,7 +11,9 @@
   --red: #f87171;
   --text: #e2eaf4;
   --muted: #4a6480;
-  --font-display: 'Syne', sans-serif;
+  /* Use the same readable face for headings and body copy. Syne's deliberately
+     compressed letterforms made dashboard labels difficult to scan. */
+  --font-display: 'Manrope', sans-serif;
   --font-mono: 'IBM Plex Mono', monospace;
   --font-body: 'Manrope', sans-serif;
   --sidebar-w: 240px;
@@ -101,7 +103,7 @@ body::after {
   font-family: var(--font-display);
   font-size: 18px;
   font-weight: 800;
-  letter-spacing: -0.5px;
+  letter-spacing: 0;
   color: white;
 }
 .logo-sub {
@@ -206,7 +208,7 @@ nav {
   font-family: var(--font-display);
   font-size: 20px;
   font-weight: 700;
-  letter-spacing: -0.4px;
+  letter-spacing: 0;
 }
 .topbar-right {
   display: flex;
@@ -258,7 +260,7 @@ nav {
   font-family: var(--font-display);
   font-size: 26px;
   font-weight: 800;
-  letter-spacing: -0.5px;
+  letter-spacing: 0;
   margin-bottom: 4px;
 }
 .section-intro p {

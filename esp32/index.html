@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PureFlow AI — Water Quality Dashboard</title>
+
+  <!-- Google Fonts used in style.css -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700&display=swap"
+    rel="stylesheet"
+  />
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ══════════════════════════════
+       SIDEBAR
+  ══════════════════════════════ -->
+  <aside id="sidebar">
+
+    <!-- Logo -->
+    <div class="logo-wrap">
+      <div class="logo-icon">💧</div>
+      <div class="logo-title">PureFlow AI</div>
+      <div class="logo-sub">Predictive Maintenance</div>
+    </div>
+
+    <!-- Navigation -->
+    <nav>
+      <div class="nav-label">Monitoring</div>
+
+      <div class="nav-item active" data-page="home">
+        <span class="nav-icon">🏠</span>
+        <span>Overview</span>
+      </div>
+
+      <div class="nav-item" data-page="sensors">
+        <span class="nav-icon">📡</span>
+        <span>Sensors</span>
+      </div>
+
+      <div class="nav-label">System</div>
+
+      <div class="nav-item" data-page="alerts">
+        <span class="nav-icon">🔔</span>
+        <span>Alerts</span>
+        <span class="nav-badge" id="alert-badge">0</span>
+      </div>
+
+      <div class="nav-item" data-page="maintenance">
+        <span class="nav-icon">🔧</span>
+        <span>Maintenance</span>
+      </div>
+    </nav>
+
+    <!-- Sidebar footer: connection status -->
+    <div style="padding: 16px 20px; border-top: 1px solid var(--border);">
+      <div style="font-family: var(--font-mono); font-size: 9px; color: var(--muted); letter-spacing: 2px; text-transform: uppercase; margin-bottom: 6px;">ESP32 Status</div>
+      <div
+        id="system-status-indicator"
+        style="font-family: var(--font-mono); font-size: 11px; color: var(--yellow); font-weight: 600;"
+      >
+        CONNECTING…
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- ══════════════════════════════
+       MAIN AREA
+  ══════════════════════════════ -->
+  <div id="main">
+
+    <!-- Top Bar -->
+    <header class="topbar">
+      <div class="topbar-title" id="page-title">System Overview</div>
+      <div class="topbar-right">
+        <div class="live-pill">
+          <div class="live-dot"></div>
+          <span>LIVE</span>
+        </div>
+        <div class="time-text" id="clock">--:--:--</div>
+      </div>
+    </header>
+
+    <!-- ── PAGE: HOME ── -->
+    <section class="page active" id="page-home">
+
+      <div class="section-intro">
+        <h2>System Overview</h2>
+        <p>Real-time water quality metrics and predictive maintenance status for your filtration system.</p>
+      </div>
+
+      <!-- Summary stat cards -->
+      <div class="stat-grid">
+
+        <div class="stat-card">
+          <div class="stat-label">System Health</div>
+          <div class="stat-value green" id="health-score">--</div>
+          <div class="stat-sub">Overall system score</div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-label">Active Sensors</div>
+          <div class="stat-value accent">5</div>
+          <div class="stat-sub">Flow · Temp · Turbidity · TDS · pH</div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-label">Active Alerts</div>
+          <div class="stat-value red" id="home-alerts">0</div>
+          <div class="stat-sub">Requires attention</div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-label">Filter Status</div>
+          <div class="stat-value accent">--</div>
+          <div class="stat-sub">Predicted RUL from AI model</div>
+        </div>
+
+      </div>
+
+      <!-- Sensor cards (populated by JS) -->
+      <div class="section-intro">
+        <h2 class="sub-heading">Live Sensor Readings</h2>
+        <p>Updating every 2 seconds from ESP32 telemetry.</p>
+      </div>
+      <div class="sensor-grid" id="home-sensor-grid">
+        <!-- Sensor cards injected by app.js -->
+      </div>
+
+    </section>
+
+    <!-- ── PAGE: SENSORS ── -->
+    <section class="page" id="page-sensors">
+
+      <div class="section-intro">
+        <h2>Sensor Monitor</h2>
+        <p>Detailed view of all connected IoT sensors with historical sparklines and safe-range indicators.</p>
+      </div>
+
+      <div class="sensor-grid" id="sensor-detail-grid">
+        <!-- Sensor cards injected by app.js -->
+      </div>
+
+    </section>
+
+    <!-- ── PAGE: ALERTS ── -->
+    <section class="page" id="page-alerts">
+
+      <div class="section-intro">
+        <h2>Alerts &amp; Notifications</h2>
+        <p>System anomalies, threshold violations, and maintenance warnings from the AI anomaly detection model.</p>
+      </div>
+
+      <div class="alert-list" id="alert-list">
+        <!-- Alert items injected by app.js -->
+      </div>
+
+    </section>
+
+    <!-- ── PAGE: MAINTENANCE ── -->
+    <section class="page" id="page-maintenance">
+
+      <div class="section-intro">
+        <h2>Maintenance Schedule</h2>
+        <p>XGBoost-predicted filter lifespan and upcoming service tasks based on real-time wear data.</p>
+      </div>
+
+      <!-- System health banner -->
+      <div class="sys-banner">
+        <div class="sys-banner-left">
+          <div class="sys-banner-label">Overall System Health</div>
+          <div class="sys-banner-score green" id="sys-health-pct">--</div>
+          <div class="sys-banner-note">Based on current sensor readings and AI model output</div>
+        </div>
+        <div class="sys-banner-grid">
+          <div class="sys-banner-cell">
+            <div class="sys-banner-cell-label">Filter RUL</div>
+            <div class="sys-banner-cell-val accent">-- days</div>
+          </div>
+          <div class="sys-banner-cell">
+            <div class="sys-banner-cell-label">Water Potable</div>
+            <div class="sys-banner-cell-val green">--</div>
+          </div>
+          <div class="sys-banner-cell">
+            <div class="sys-banner-cell-label">Last Flush</div>
+            <div class="sys-banner-cell-val">--</div>
+          </div>
+          <div class="sys-banner-cell">
+            <div class="sys-banner-cell-label">Next Service</div>
+            <div class="sys-banner-cell-val">--</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Maintenance timeline -->
+      <div class="timeline-heading">Scheduled Tasks</div>
+      <div class="maint-timeline" id="maint-timeline">
+        <!-- Task rows injected by app.js -->
+      </div>
+
+      <!-- Calendar -->
+      <div class="cal-wrap">
+        <div class="cal-title">August 2026</div>
+        <div class="cal-grid" id="calendar">
+          <!-- Calendar cells injected by app.js -->
+        </div>
+        <div class="cal-legend">
+          <div class="cal-legend-item">
+            <span class="cal-legend-dot red-dot"></span> Immediate
+          </div>
+          <div class="cal-legend-item">
+            <span class="cal-legend-dot yellow-dot"></span> This Week
+          </div>
+          <div class="cal-legend-item">
+            <span class="cal-legend-dot accent-dot"></span> Upcoming
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+  </div><!-- /#main -->
+
+  <script src="app.js"></script>
+</body>
+</html>
