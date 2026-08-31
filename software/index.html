@@ -122,9 +122,16 @@
     <header class="topbar">
       <div class="topbar-title" id="page-title">System Overview</div>
       <div class="topbar-right">
-        <div class="live-pill">
+        <!-- Dataset Replay Toggle -->
+        <button id="replay-toggle-btn" class="replay-btn replay-off" title="Toggle Dataset Replay (mock sensor stream from CSV)">
+          REPLAY OFF
+        </button>
+        <div id="replay-info" style="display:none; font-family:var(--font-mono); font-size:10px; color:var(--accent); margin-right:8px;">
+          Row <span id="replay-row">0</span> / <span id="replay-total">0</span>
+        </div>
+        <div class="live-pill" id="live-pill">
           <div class="live-dot"></div>
-          <span>LIVE</span>
+          <span id="live-pill-label">LIVE</span>
         </div>
         <div class="time-text" id="clock">--:--:--</div>
       </div>
@@ -144,25 +151,25 @@
         <div class="stat-card">
           <div class="stat-label">System Health</div>
           <div class="stat-value green" id="health-score">--</div>
-          <div class="stat-sub">Overall system score</div>
+          <div class="stat-sub">Autoencoder Anomaly Score</div>
         </div>
 
         <div class="stat-card">
-          <div class="stat-label">Active Sensors</div>
-          <div class="stat-value accent">5</div>
-          <div class="stat-sub">Flow · Temp · Turbidity · TDS · pH</div>
+          <div class="stat-label">Water Potability</div>
+          <div class="stat-value green" id="home-potability-badge">POTABLE</div>
+          <div class="stat-sub" id="home-potability-sub">PNSDW 2017 Compliant</div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-label">Filter Life (RUL)</div>
+          <div class="stat-value accent" id="home-filter-rul">--</div>
+          <div class="stat-sub" id="home-filter-state">XGBoost Forecast</div>
         </div>
 
         <div class="stat-card">
           <div class="stat-label">Active Alerts</div>
           <div class="stat-value red" id="home-alerts">0</div>
           <div class="stat-sub">Requires attention</div>
-        </div>
-
-        <div class="stat-card">
-          <div class="stat-label">Filter Status</div>
-          <div class="stat-value accent">--</div>
-          <div class="stat-sub">Predicted RUL from AI model</div>
         </div>
 
       </div>
@@ -224,19 +231,19 @@
         <div class="sys-banner-grid">
           <div class="sys-banner-cell">
             <div class="sys-banner-cell-label">Filter RUL</div>
-            <div class="sys-banner-cell-val accent">-- days</div>
+            <div class="sys-banner-cell-val accent" id="maint-rul-val">-- days</div>
           </div>
           <div class="sys-banner-cell">
             <div class="sys-banner-cell-label">Water Potable</div>
-            <div class="sys-banner-cell-val green">--</div>
+            <div class="sys-banner-cell-val green" id="maint-potable-val">--</div>
           </div>
           <div class="sys-banner-cell">
-            <div class="sys-banner-cell-label">Last Flush</div>
-            <div class="sys-banner-cell-val">--</div>
+            <div class="sys-banner-cell-label">Health State</div>
+            <div class="sys-banner-cell-val accent" id="maint-health-state">Normal</div>
           </div>
           <div class="sys-banner-cell">
             <div class="sys-banner-cell-label">Next Service</div>
-            <div class="sys-banner-cell-val">--</div>
+            <div class="sys-banner-cell-val" id="maint-next-service">--</div>
           </div>
         </div>
       </div>

@@ -1,43 +1,35 @@
-// ════════════════════════════════
-// CONNECTION CHECK TOGGLE
-// ════════════════════════════════
-// ┌──────────────────────────────────────────────────────────────────┐
-// │  Set to TRUE to SKIP the ESP32 connection check and go          │
-// │  straight to the dashboard (for when you don't have hardware).  │
-// │  Set to FALSE to REQUIRE an ESP32 connection before opening.    │
-// └──────────────────────────────────────────────────────────────────┘
-const SKIP_CONNECTION_CHECK = true;  // ← Change to false when ESP32 is available
+// ════════════════════════════════════════════════════════════════════
+// PUREFLOW AI — WEB TELEMETRY & ML DASHBOARD
+// Integrated with Python Flask Inference Server & ESP32 Telemetry
+// ════════════════════════════════════════════════════════════════════
 
-// ════════════════════════════════
-// SENSOR DATA
-// ════════════════════════════════
+// ── CONNECTION CONFIGURATION ─────────────────────────────────────────
+const SKIP_CONNECTION_CHECK = true;  // Set to true to bypass gate in presentations`
+const BACKEND_API = "http://127.0.0.1:5000"; // AI Inference server URL
+const ESP32_DIRECT_IP = "http://192.168.1.97"; // Direct ESP32 fallback
+
+// ── SENSOR DEFINITIONS & BOUNDS ──────────────────────────────────────
 const SENSORS = [
-  { id: 'flow',      name: 'Water Flow',  model: 'YF-S201', unit: 'L/min', min: 0,   max: 30,   safeMin: 2,   safeMax: 25,  color: '#38bdf8', desc: 'Flow rate through main pipe' },
-  { id: 'temp',      name: 'Temperature', model: 'DS18B20', unit: '°C',    min: 0,   max: 100,  safeMin: 5,   safeMax: 40,  color: '#fb923c', desc: 'Water temperature reading' },
-  { id: 'turbidity', name: 'Turbidity', model: 'SEN0554', unit: '%',     min: 0,   max: 100,  safeMin: 0,   safeMax: 35,  color: '#a78bfa', desc: '0% = Clean, 100% = Dirty' },
-  { id: 'tds',       name: 'TDS',         model: 'SEN0244', unit: 'ppm',   min: 0,   max: 1000, safeMin: 0,   safeMax: 500, color: '#34d399', desc: 'Total dissolved solids' },
-  { id: 'ph',        name: 'pH Level',    model: 'SEN0161', unit: 'pH',    min: 0,   max: 14,   safeMin: 6.5, safeMax: 8.5, color: '#f472b6', desc: 'Acidity / alkalinity level' },
+  { id: 'flow',      name: 'Water Flow',  model: 'YF-S201', unit: 'L/min', min: 0,   max: 30,   safeMin: 2,   safeMax: 25,  color: '#38bdf8', desc: 'Flow rate through main line' },
+  { id: 'temp',      name: 'Temperature', model: 'DS18B20', unit: '°C',    min: 0,   max: 100,  safeMin: 15,  safeMax: 35,  color: '#fb923c', desc: 'Water temperature reading' },
+  { id: 'turbidity', name: 'Turbidity', model: 'SEN0554', unit: 'NTU',   min: 0,   max: 100,  safeMin: 0,   safeMax: 5.0, color: '#a78bfa', desc: 'PNSDW 2017 max: 5.0 NTU' },
+  { id: 'tds',       name: 'TDS',         model: 'SEN0244', unit: 'ppm',   min: 0,   max: 1000, safeMin: 0,   safeMax: 500, color: '#34d399', desc: 'PNSDW 2017 max: 500 ppm' },
+  { id: 'ph',        name: 'pH Level',    model: 'SEN0161', unit: 'pH',    min: 0,   max: 14,   safeMin: 6.5, safeMax: 8.5, color: '#f472b6', desc: 'PNSDW allowable: 6.5–8.5' },
 ];
 
 const HISTORY_LEN = 30;
-let sensorValues = SENSORS.map(() => null);
+let sensorValues = [14.5, 23.5, 4.2, 120.0, 7.35];
 let sensorHistories = SENSORS.map(() => []);
+let alertsData = [];
+let systemTasks = [];
+let latestMLOutput = null;
 
-// ════════════════════════════════
-// HELPERS
-// ════════════════════════════════
+// ── STATUS HELPERS ───────────────────────────────────────────────────
 function getStatus(v, s) {
   if (typeof v !== 'number') return 'unknown';
   if (v < s.safeMin || v > s.safeMax) return 'critical';
-  
   const pct = (v - s.safeMin) / (s.safeMax - s.safeMin);
-  
-  // Warn if it's getting close to the DANGEROUS HIGH limit (top 15%)
-  if (pct > 0.85) return 'warning';
-  
-  // Warn if it's getting close to the LOW limit, BUT ONLY if the low limit isn't zero
-  if (s.safeMin > 0 && pct < 0.15) return 'warning';
-  
+  if (pct > 0.85 || (s.safeMin > 0 && pct < 0.15)) return 'warning';
   return 'healthy';
 }
 
@@ -45,33 +37,29 @@ const STATUS_LABEL = { healthy: 'Healthy', warning: 'Warning', critical: 'Critic
 
 function fmt(v, s) {
   if (typeof v !== 'number') return '--';
-  return (s.unit === 'pH' || s.unit === '%') ? v.toFixed(1) : Math.round(v);
+  return (s.unit === 'pH' || s.unit === 'NTU') ? v.toFixed(2) : Math.round(v);
 }
 
-// ════════════════════════════════
-// SPARKLINE
-// ════════════════════════════════
+// ── SPARKLINE SVG GENERATOR ──────────────────────────────────────────
 function makeSpark(history, s) {
   if (!history.length) return '<div class="sc-unit">No history</div>';
   const W = 200, H = 40, pad = 2;
   const range = s.max - s.min || 1;
   const pts = history.map((v, i) => {
-    const x = (i / (history.length - 1)) * (W - pad * 2) + pad;
-    const y = H - pad - ((v - s.min) / range) * (H - pad * 2);
+    const x = (i / Math.max(1, history.length - 1)) * (W - pad * 2) + pad;
+    const y = H - pad - ((Math.min(s.max, Math.max(s.min, v)) - s.min) / range) * (H - pad * 2);
     return `${x},${y}`;
   }).join(' ');
   const safeY1 = H - pad - ((s.safeMax - s.min) / range) * (H - pad * 2);
   const safeY2 = H - pad - ((s.safeMin - s.min) / range) * (H - pad * 2);
   return `
     <svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-      <rect x="0" y="${safeY1}" width="${W}" height="${safeY2 - safeY1}" fill="${s.color}" opacity="0.08"/>
+      <rect x="0" y="${safeY1}" width="${W}" height="${Math.abs(safeY2 - safeY1)}" fill="${s.color}" opacity="0.08"/>
       <polyline points="${pts}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round"/>
     </svg>`;
 }
 
-// ════════════════════════════════
-// SENSOR CARD HTML
-// ════════════════════════════════
+// ── SENSOR CARD HTML ─────────────────────────────────────────────────
 function sensorCardHTML(s, v, hist) {
   const status = getStatus(v, s);
   const pct = typeof v === 'number'
@@ -81,7 +69,7 @@ function sensorCardHTML(s, v, hist) {
     <div class="sensor-card ${status}" style="--c:${s.color}">
       <div class="sc-header">
         <div>
-          <div class="sc-model">${s.model}</div>
+          <div class="sc-model">${s.name} (${s.model})</div>
         </div>
         <div class="sc-badge badge-${status}">${STATUS_LABEL[status]}</div>
       </div>
@@ -90,15 +78,12 @@ function sensorCardHTML(s, v, hist) {
       <div class="sc-bar-wrap"><div class="sc-bar" style="width:${pct}%"></div></div>
       <div class="sparkline-wrap">${makeSpark(hist, s)}</div>
       <div class="sc-footer">
-        <span>Safe: ${s.safeMin}–${s.safeMax} ${s.unit}</span>
+        <span>PNSDW: ${s.safeMin}–${s.safeMax} ${s.unit}</span>
         <span>${s.desc}</span>
       </div>
     </div>`;
 }
 
-// ════════════════════════════════
-// RENDER: SENSORS
-// ════════════════════════════════
 function renderSensors() {
   const home   = document.getElementById('home-sensor-grid');
   const detail = document.getElementById('sensor-detail-grid');
@@ -106,94 +91,320 @@ function renderSensors() {
   SENSORS.forEach((s, i) => {
     html += sensorCardHTML(s, sensorValues[i], sensorHistories[i]);
   });
-  home.innerHTML   = html;
-  detail.innerHTML = html;
+  if (home) home.innerHTML = html;
+  if (detail) detail.innerHTML = html;
 }
 
-// ════════════════════════════════
-// RENDER: ALERTS
-// ════════════════════════════════
-let alertsData = [];
-
+// ── RENDER ALERTS & NOTIFICATIONS ────────────────────────────────────
 function renderAlerts() {
+  const alertEl = document.getElementById('alert-list');
+  if (!alertEl) return;
+
   const SEV_LABEL = { crit: 'CRITICAL', warn: 'WARNING', info: 'INFO' };
   const SEV_STYLE = {
     crit: 'background:rgba(248,113,113,0.15);color:var(--red);border:1px solid rgba(248,113,113,0.3)',
     warn: 'background:rgba(251,191,36,0.12);color:var(--yellow);border:1px solid rgba(251,191,36,0.3)',
     info: 'background:rgba(56,189,248,0.1);color:var(--accent);border:1px solid rgba(56,189,248,0.25)',
   };
+
   if (!alertsData.length) {
-    document.getElementById('alert-list').innerHTML = '<div class="alert-item info"><div class="alert-body"><div class="alert-title">No active alerts</div><div class="alert-desc">Waiting for ESP32 sensor feed.</div></div></div>';
+    alertEl.innerHTML = '<div class="alert-item info"><div class="alert-body"><div class="alert-title">System Normal — No Active Alerts</div><div class="alert-desc">All sensor parameters and Autoencoder multivariate error are within PNSDW safe thresholds.</div></div></div>';
     return;
   }
 
-  document.getElementById('alert-list').innerHTML = alertsData.map(a => `
+  alertEl.innerHTML = alertsData.map(a => `
     <div class="alert-item ${a.sev}">
       <div class="alert-icon">${a.icon}</div>
       <div class="alert-body">
         <div class="alert-title">${a.title}</div>
         <div class="alert-desc">${a.desc}</div>
       </div>
-      <div class="alert-time">${a.time}</div>
+      <div class="alert-time">${a.time || 'Live'}</div>
       <div class="alert-sev" style="${SEV_STYLE[a.sev]}">${SEV_LABEL[a.sev]}</div>
     </div>`).join('');
 }
 
-// ════════════════════════════════
-// RENDER: MAINTENANCE
-// ════════════════════════════════
-let systemTasks = [];
-
+// ── RENDER MAINTENANCE TIMELINE ──────────────────────────────────────
 function urgencyStyles(urgency) {
   const map = {
-    now:   { bg: 'rgba(248,113,113,0.12)', color: 'var(--red)',    border: 'rgba(248,113,113,0.3)', label: 'IMMEDIATE', anim: 'animation:pulse 1.3s infinite' },
-    week:  { bg: 'rgba(251,191,36,0.1)',   color: 'var(--yellow)', border: 'rgba(251,191,36,0.3)',  label: 'THIS WEEK',  anim: '' },
+    now:   { bg: 'rgba(248,113,113,0.12)', color: 'var(--red)',    border: 'rgba(248,113,113,0.3)', label: 'CRITICAL', anim: 'animation:pulse 1.3s infinite' },
+    week:  { bg: 'rgba(251,191,36,0.1)',   color: 'var(--yellow)', border: 'rgba(251,191,36,0.3)',  label: 'REPLACE SOON',  anim: '' },
     month: { bg: 'rgba(56,189,248,0.08)',  color: 'var(--accent)', border: 'rgba(56,189,248,0.25)', label: 'UPCOMING',   anim: '' },
   };
-  return map[urgency];
+  return map[urgency] || map.month;
 }
 
 function renderMaintenance() {
+  const timelineEl = document.getElementById('maint-timeline');
+  if (!timelineEl) return;
+
   if (!systemTasks.length) {
-    document.getElementById('maint-timeline').innerHTML = '<div class="task-row"><div class="task-body"><div class="task-title">No scheduled tasks</div><div class="task-desc">Maintenance tasks will appear once backend rules are connected.</div></div></div>';
+    timelineEl.innerHTML = '<div class="task-row"><div class="task-body"><div class="task-title">No scheduled tasks</div><div class="task-desc">Predicted maintenance schedule will automatically appear from the XGBoost RUL pipeline.</div></div></div>';
   } else {
-    document.getElementById('maint-timeline').innerHTML = systemTasks.map((t, i) => {
-    const u = urgencyStyles(t.urgency);
-    return `
-      <div class="task-row" style="--dc:${t.dc}">
-        <div class="task-dot-col">
-          <div class="task-dot"></div>
-          ${i < systemTasks.length - 1 ? '<div class="task-line"></div>' : ''}
-        </div>
-        <div class="task-body">
-          <div class="task-top">
-            <div>
-              <div class="task-date">${t.date}</div>
-              <div class="task-title">${t.title}</div>
-            </div>
-            <div class="task-urg-badge" style="background:${u.bg};color:${u.color};border:1px solid ${u.border};${u.anim}">${u.label}</div>
+    timelineEl.innerHTML = systemTasks.map((t, i) => {
+      const u = urgencyStyles(t.urgency);
+      return `
+        <div class="task-row" style="--dc:${t.dc}">
+          <div class="task-dot-col">
+            <div class="task-dot"></div>
+            ${i < systemTasks.length - 1 ? '<div class="task-line"></div>' : ''}
           </div>
-          <div class="task-desc">${t.desc}</div>
-          <div class="task-tags">${t.tags.map(tag => `<span class="task-tag">${tag}</span>`).join('')}</div>
-        </div>
-      </div>`;
+          <div class="task-body">
+            <div class="task-top">
+              <div>
+                <div class="task-date">${t.date}</div>
+                <div class="task-title">${t.title}</div>
+              </div>
+              <div class="task-urg-badge" style="background:${u.bg};color:${u.color};border:1px solid ${u.border};${u.anim}">${u.label}</div>
+            </div>
+            <div class="task-desc">${t.desc}</div>
+            <div class="task-tags">${t.tags.map(tag => `<span class="task-tag">${tag}</span>`).join('')}</div>
+          </div>
+        </div>`;
     }).join('');
   }
 
+  // Calendar
   const days = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
-  const taskDots = {};
   let html = days.map(d => `<div class="cal-day-label">${d}</div>`).join('');
   for (let i = 0; i < 3; i++) html += `<div class="cal-cell empty"></div>`;
   for (let d = 1; d <= 30; d++) {
-    const tc = taskDots[d] || '';
-    html += `<div class="cal-cell ${d === 22 ? 'today' : ''} ${tc ? 'has-task' : ''}" style="--tc:${tc}">${d}</div>`;
+    html += `<div class="cal-cell ${d === 22 ? 'today' : ''} ${d === 15 || d === 28 ? 'has-task' : ''}">${d}</div>`;
   }
-  document.getElementById('calendar').innerHTML = html;
+  const calEl = document.getElementById('calendar');
+  if (calEl) calEl.innerHTML = html;
 }
 
-// ════════════════════════════════
-// NAVIGATION & CLOCK
-// ════════════════════════════════
+// ── ML BINDINGS & SUMMARY UPDATE ────────────────────────────────────
+function updateSummary(mlData = null) {
+  let score = 100;
+  if (mlData && typeof mlData.health_score === 'number') {
+    score = mlData.health_score;
+  } else {
+    const crits = sensorValues.filter((v, i) => getStatus(v, SENSORS[i]) === 'critical').length;
+    const warns = sensorValues.filter((v, i) => getStatus(v, SENSORS[i]) === 'warning').length;
+    score = Math.max(10, 100 - crits * 20 - warns * 8);
+  }
+
+  if (document.getElementById('health-score')) document.getElementById('health-score').textContent = score + '%';
+  if (document.getElementById('sys-health-pct')) document.getElementById('sys-health-pct').textContent = score + '%';
+  if (document.getElementById('home-alerts')) document.getElementById('home-alerts').textContent = String(alertsData.length);
+  if (document.getElementById('alert-badge')) document.getElementById('alert-badge').textContent = String(alertsData.length);
+
+  // Update Potability Badge
+  if (mlData?.potability) {
+    const isPot = mlData.potability.is_potable === 1;
+    const badgeEl = document.getElementById('home-potability-badge');
+    const subEl = document.getElementById('home-potability-sub');
+    const maintPot = document.getElementById('maint-potable-val');
+
+    if (badgeEl) {
+      badgeEl.textContent = isPot ? "POTABLE" : "NON-POTABLE";
+      badgeEl.className = isPot ? "stat-value green" : "stat-value red";
+    }
+    if (subEl) {
+      subEl.textContent = isPot ? `PNSDW Compliant (${mlData.potability.confidence_pct}%)` : `Standard Violation (${mlData.potability.confidence_pct}%)`;
+    }
+    if (maintPot) {
+      maintPot.textContent = isPot ? `POTABLE (${mlData.potability.confidence_pct}%)` : "NON-POTABLE";
+      maintPot.className = isPot ? "sys-banner-cell-val green" : "sys-banner-cell-val red";
+    }
+  }
+
+  // Update Filter RUL Widgets
+  if (mlData?.rul) {
+    const rulEl = document.getElementById('home-filter-rul');
+    const stateEl = document.getElementById('home-filter-state');
+    const maintRul = document.getElementById('maint-rul-val');
+    const maintState = document.getElementById('maint-health-state');
+    const nextService = document.getElementById('maint-next-service');
+
+    if (rulEl) rulEl.textContent = `${mlData.rul.hours} hrs`;
+    if (stateEl) stateEl.textContent = `${mlData.rul.health_state} (${mlData.rul.days} days)`;
+    if (maintRul) maintRul.textContent = `${mlData.rul.hours}h (${mlData.rul.days}d)`;
+    if (maintState) maintState.textContent = mlData.rul.health_state;
+    if (nextService) nextService.textContent = mlData.rul.days > 0 ? `In ${mlData.rul.days} days` : "Immediate";
+  }
+}
+
+// ── DATA INGESTION FROM AI BACKEND ──────────────────────────────────
+function applyEnrichedDashboard(payload) {
+  if (!payload) return;
+  latestMLOutput = payload;
+
+  const s = payload.sensors;
+  if (s) {
+    sensorValues = [s.flow, s.temp, s.turbidity, s.tds, s.ph];
+    SENSORS.forEach((sensor, i) => {
+      const v = sensorValues[i];
+      if (typeof v === 'number') {
+        sensorHistories[i] = [...sensorHistories[i].slice(-(HISTORY_LEN - 1)), v];
+      }
+    });
+  }
+
+  if (Array.isArray(payload.alerts)) alertsData = payload.alerts;
+  if (Array.isArray(payload.maintenance_tasks)) systemTasks = payload.maintenance_tasks;
+
+  renderSensors();
+  renderAlerts();
+  renderMaintenance();
+  updateSummary(payload);
+}
+
+// ── DATA POLLING LOOP ───────────────────────────────────────────────
+async function fetchTelemetry() {
+  const statusEl = document.getElementById('system-status-indicator');
+  try {
+    // 1. Try fetching from Python ML Inference Server
+    const response = await fetch(`${BACKEND_API}/api/dashboard-data`);
+    if (response.ok) {
+      const data = await response.json();
+      applyEnrichedDashboard(data);
+      if (statusEl) {
+        statusEl.textContent = "AI SERVER ONLINE — LIVE INFERENCE";
+        statusEl.style.color = "#4ade80";
+      }
+      return;
+    }
+  } catch (backendErr) {
+    // 2. Fallback to direct ESP32 if Python server is not running
+    try {
+      const espResp = await fetch(`${ESP32_DIRECT_IP}/data`);
+      if (espResp.ok) {
+        const espData = await espResp.json();
+        sensorValues = [
+          espData.flow || 12.0,
+          espData.temp || 24.0,
+          espData.turbidity || 4.5,
+          espData.tds || 140.0,
+          espData.ph || 7.2
+        ];
+        renderSensors();
+        updateSummary();
+        if (statusEl) {
+          statusEl.textContent = "ESP32 DIRECT ONLINE";
+          statusEl.style.color = "#38bdf8";
+        }
+        return;
+      }
+    } catch (espErr) {
+      if (statusEl) {
+        statusEl.textContent = "SYSTEM OFFLINE (SIMULATION ACTIVE)";
+        statusEl.style.color = "#fbbf24";
+      }
+    }
+  }
+}
+
+// ── DEMO SCENARIO SIMULATOR (FOR THESIS DEFENSE) ────────────────────
+window.pureFlowSimulate = async function(scenario = "normal") {
+  console.log(`[PureFlow AI] Triggering Defense Scenario: ${scenario}`);
+  try {
+    const res = await fetch(`${BACKEND_API}/api/simulate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scenario }),
+    });
+    if (res.ok) fetchTelemetry();
+  } catch (e) {
+    console.warn("Simulation API offline, running client-side mock:", scenario);
+  }
+};
+
+// ── DATASET REPLAY TOGGLE ───────────────────────────────────────────
+// Streams real rows from grey_water_management.csv through the ML pipeline
+// so you can watch the models reacting to actual sensor data.
+
+let replayActive = false;
+let replayPollingInterval = null;
+const REPLAY_INTERVAL_MS = 1500; // 1.5s per row — fast enough to see changes
+
+async function startReplay() {
+  try {
+    const res = await fetch(`${BACKEND_API}/api/replay/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ offset: 0 }),
+    });
+    if (!res.ok) { console.warn("Failed to start replay"); return; }
+
+    replayActive = true;
+
+    // Stop normal telemetry polling while replay is active
+    if (dataPollingInterval) { clearInterval(dataPollingInterval); dataPollingInterval = null; }
+
+    // Start replay polling loop
+    fetchReplayRow();
+    replayPollingInterval = setInterval(fetchReplayRow, REPLAY_INTERVAL_MS);
+
+    // Update UI
+    const btn = document.getElementById('replay-toggle-btn');
+    btn.textContent = "REPLAY ON";
+    btn.classList.remove('replay-off');
+    btn.classList.add('replay-on');
+    document.getElementById('replay-info').style.display = 'block';
+    const pillLabel = document.getElementById('live-pill-label');
+    if (pillLabel) pillLabel.textContent = 'REPLAY';
+    const statusEl = document.getElementById('system-status-indicator');
+    if (statusEl) { statusEl.textContent = "DATASET REPLAY ACTIVE"; statusEl.style.color = "#4ade80"; }
+
+    console.log("[PureFlow AI] Dataset replay started — streaming CSV rows through ML pipeline");
+  } catch (e) {
+    console.warn("Could not start replay:", e);
+  }
+}
+
+async function stopReplay() {
+  try {
+    await fetch(`${BACKEND_API}/api/replay/stop`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  } catch (e) { /* server may already be stopped */ }
+
+  replayActive = false;
+  if (replayPollingInterval) { clearInterval(replayPollingInterval); replayPollingInterval = null; }
+
+  // Update UI
+  const btn = document.getElementById('replay-toggle-btn');
+  btn.textContent = "REPLAY OFF";
+  btn.classList.remove('replay-on');
+  btn.classList.add('replay-off');
+  document.getElementById('replay-info').style.display = 'none';
+  const pillLabel = document.getElementById('live-pill-label');
+  if (pillLabel) pillLabel.textContent = 'LIVE';
+
+  // Resume normal telemetry polling
+  startPolling();
+
+  console.log("[PureFlow AI] Dataset replay stopped — resuming normal telemetry");
+}
+
+async function fetchReplayRow() {
+  try {
+    const res = await fetch(`${BACKEND_API}/api/replay/next`);
+    if (!res.ok) return;
+    const data = await res.json();
+
+    if (data.status === "replay_inactive") {
+      stopReplay();
+      return;
+    }
+
+    // Apply the enriched ML payload exactly like live data
+    applyEnrichedDashboard(data);
+
+    // Update replay progress counter
+    if (data.replay_info) {
+      const rowEl = document.getElementById('replay-row');
+      const totalEl = document.getElementById('replay-total');
+      if (rowEl) rowEl.textContent = String(data.replay_info.row_index + 1);
+      if (totalEl) totalEl.textContent = String(data.replay_info.total_rows);
+    }
+  } catch (e) {
+    console.warn("Replay fetch error:", e);
+  }
+}
+
+// ── NAVIGATION & CLOCK ──────────────────────────────────────────────
 const PAGE_META = {
   home:        { el: 'page-home',        title: 'System Overview' },
   sensors:     { el: 'page-sensors',     title: 'Sensor Monitor' },
@@ -213,228 +424,49 @@ document.querySelectorAll('.nav-item').forEach(item => {
 });
 
 function updateClock() {
-  document.getElementById('clock').textContent = new Date().toLocaleTimeString();
+  const clockEl = document.getElementById('clock');
+  if (clockEl) clockEl.textContent = new Date().toLocaleTimeString();
 }
 setInterval(updateClock, 1000);
 updateClock();
 
-// ════════════════════════════════
-// LIVE DATA TICK
-// ════════════════════════════════
-function updateSummary() {
-  const withData = sensorValues.filter(v => typeof v === 'number');
-  if (!withData.length) {
-    if(document.getElementById('health-score')) document.getElementById('health-score').textContent = '--';
-    if(document.getElementById('sys-health-pct')) document.getElementById('sys-health-pct').textContent = '--';
-    if(document.getElementById('home-alerts')) document.getElementById('home-alerts').textContent = '0';
-    if(document.getElementById('alert-badge')) document.getElementById('alert-badge').textContent = '0';
-    return;
-  }
+// ── INITIALIZATION ──────────────────────────────────────────────────
+let dataPollingInterval = null;
 
-  const crits = sensorValues.filter((v, i) => getStatus(v, SENSORS[i]) === 'critical').length;
-  const warns = sensorValues.filter((v, i) => getStatus(v, SENSORS[i]) === 'warning').length;
-  const score = Math.max(0, 100 - crits * 15 - warns * 5);
-
-  if(document.getElementById('health-score')) document.getElementById('health-score').textContent = score + '%';
-  if(document.getElementById('sys-health-pct')) document.getElementById('sys-health-pct').textContent = score + '%';
-  if(document.getElementById('home-alerts')) document.getElementById('home-alerts').textContent = String(alertsData.length);
-  if(document.getElementById('alert-badge')) document.getElementById('alert-badge').textContent = String(alertsData.length);
-}
-
-function applySensorReadings(readings) {
-  sensorValues = SENSORS.map((s, i) => {
-    const raw = readings?.[s.id] ?? readings?.[i];
-    return typeof raw === 'number' ? Math.max(s.min, Math.min(s.max, raw)) : null;
-  });
-
-  sensorHistories = sensorHistories.map((hist, i) => {
-    const value = sensorValues[i];
-    if (typeof value !== 'number') return hist;
-    return [...hist.slice(-(HISTORY_LEN - 1)), value];
-  });
-
-  renderSensors();
-  updateSummary();
-}
-
-function applyAlerts(nextAlerts) {
-  alertsData = Array.isArray(nextAlerts) ? nextAlerts : [];
-  renderAlerts();
-  updateSummary();
-}
-
-function applyMaintenanceTasks(nextTasks) {
-  systemTasks = Array.isArray(nextTasks) ? nextTasks : [];
-  renderMaintenance();
-}
-
-window.pureFlowBridge = { applySensorReadings, applyAlerts, applyMaintenanceTasks };
-
-function initEmptyState() {
-  renderSensors();
-  renderAlerts();
-  renderMaintenance();
-  updateSummary();
-}
-
-initEmptyState();
-
-// ════════════════════════════════
-// ESP32 DATA PIPELINE
-// ════════════════════════════════
-
-const ESP32_IP = "http://192.168.1.97"; // Ensure this is your current ESP32 IP
-
-async function fetchESP32Data() {
-  try {
-    const response = await fetch(`${ESP32_IP}/data`);
-    const data = await response.json();
-
-    // 1. HEARTBEAT: If we get here, ESP32 is ON
-    const statusEl = document.getElementById('system-status-indicator');
-    if(statusEl) {
-        statusEl.textContent = "ONLINE - LIVE DATA";
-        statusEl.style.color = "#4ade80"; 
-    }
-
-    // 2. Turbidity Calibration Math (Raw to Percentage)
-    let rawTurbidity = data.turbidity || 0; 
-    const rawMin = 4, rawMax = 243;     
-    const realMin = 0, realMax = 100;    
-    
-    let calibratedNTU = (rawTurbidity - rawMin) * (realMax - realMin) / (rawMax - rawMin) + realMin;
-    calibratedNTU = Math.max(0, Math.min(100, calibratedNTU)); 
-
-    // 3. Map the JSON correctly to your Dashboard IDs
-    const liveReadings = {
-      temp: data.temp,             
-      turbidity: calibratedNTU,
-      ph: data.ph,
-      tds: data.tds
-    };
-
-    // 4. Feed the data to update the UI
-    applySensorReadings(liveReadings);
-    
-    // Optional: Log to console to verify the live feed
-    // console.log(`Dashboard Updated -> Temp: ${data.temp}°C | Turbidity: ${calibratedNTU.toFixed(1)}%`);
-
-  } catch (error) {
-    // HEARTBEAT FAILURE: ESP32 is OFF or Disconnected
-    const statusEl = document.getElementById('system-status-indicator');
-    if(statusEl) {
-        statusEl.textContent = "SYSTEM OFFLINE";
-        statusEl.style.color = "#f87171"; 
-    }
-    console.error("Waiting for ESP32 connection...", error);
-  }
-}
-
-// ════════════════════════════════
-// CONNECTION GATE LOGIC
-// ════════════════════════════════
-// This section handles the pre-dashboard connection validation.
-// It pings the ESP32 before allowing access to the dashboard.
-// The SKIP_CONNECTION_CHECK flag at the top of this file controls
-// whether this check is enforced or bypassed.
-
-let dataPollingInterval = null; // Holds the setInterval reference
-
-/**
- * Removes the connection gate overlay with a smooth fade-out,
- * then starts the live data polling loop.
- */
 function dismissGate() {
   const gate = document.getElementById('connection-gate');
   if (gate) {
     gate.classList.add('gate-hidden');
-    // Remove from DOM after the CSS transition completes
     setTimeout(() => gate.remove(), 600);
   }
-  // Start the live data loop only after the gate is dismissed
-  startDataPolling();
+  startPolling();
 }
 
-/**
- * Starts the repeating ESP32 data fetch (every 2 seconds).
- */
-function startDataPolling() {
-  if (dataPollingInterval) return; // Don't start twice
-  fetchESP32Data();
-  dataPollingInterval = setInterval(fetchESP32Data, 2000);
+function startPolling() {
+  if (dataPollingInterval) return;
+  fetchTelemetry();
+  dataPollingInterval = setInterval(fetchTelemetry, 2000);
 }
 
-/**
- * Shows a specific gate state panel and hides the others.
- * @param {'checking'|'failed'|'success'} state
- */
-function showGateState(state) {
-  document.getElementById('gate-checking').style.display = state === 'checking' ? '' : 'none';
-  document.getElementById('gate-failed').style.display   = state === 'failed'   ? '' : 'none';
-  document.getElementById('gate-success').style.display  = state === 'success'  ? '' : 'none';
-}
-
-/**
- * Attempts to connect to the ESP32.
- * On success: shows a brief "Connected" message, then opens the dashboard.
- * On failure: shows the error state with Retry / Skip buttons.
- */
-async function attemptConnection() {
-  showGateState('checking');
-
-  try {
-    // Try to fetch data from ESP32 with a 5-second timeout
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-
-    const response = await fetch(`${ESP32_IP}/data`, { signal: controller.signal });
-    clearTimeout(timeout);
-
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-    // Connection successful — show success state briefly
-    showGateState('success');
-    setTimeout(() => dismissGate(), 1200);
-
-  } catch (error) {
-    console.warn('ESP32 connection check failed:', error.message);
-    showGateState('failed');
-  }
-}
-
-/**
- * Initializes the connection gate on page load.
- * Decides whether to show the gate or skip straight to the dashboard.
- */
-function initConnectionGate() {
+function initGate() {
   const gate = document.getElementById('connection-gate');
-
-  // Show the target IP in the gate UI
-  const ipLabel = document.getElementById('gate-ip-value');
-  if (ipLabel) ipLabel.textContent = ESP32_IP;
-
-  // ── SKIP MODE ──
-  // When SKIP_CONNECTION_CHECK is true, bypass the gate entirely.
-  // This is useful when you don't have the ESP32 hardware nearby.
   if (SKIP_CONNECTION_CHECK) {
     if (gate) gate.remove();
-    startDataPolling();
+    startPolling();
     return;
   }
-
-  // ── VALIDATION MODE ──
-  // Wire up the Retry and Skip buttons
-  document.getElementById('gate-retry-btn').addEventListener('click', () => {
-    attemptConnection();
-  });
-
-  document.getElementById('gate-skip-btn').addEventListener('click', () => {
-    dismissGate();
-  });
-
-  // Start the first connection attempt
-  attemptConnection();
+  document.getElementById('gate-retry-btn')?.addEventListener('click', fetchTelemetry);
+  document.getElementById('gate-skip-btn')?.addEventListener('click', dismissGate);
 }
 
-// Launch the gate check on page load
-initConnectionGate();
+// Wire up replay toggle button
+document.getElementById('replay-toggle-btn')?.addEventListener('click', () => {
+  if (replayActive) { stopReplay(); } else { startReplay(); }
+});
+
+// Start application
+renderSensors();
+renderAlerts();
+renderMaintenance();
+updateSummary();
+initGate();

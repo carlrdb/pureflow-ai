@@ -1,0 +1,18 @@
+{
+  "TURBIDITY_MAX": 9.999,
+  "FLOW_MAX": 99.999,
+  "TDS_MAX": 499.962,
+  "feature_columns": [
+    "Flow Discharge (L/min)",
+    "Turbidity (NTU)",
+    "TDS (mg/l)",
+    "pH",
+    "Temperature (deg C)",
+    "TDS_x_Turbidity",
+    "pH_deviation",
+    "Flow_per_TDS",
+    "Turbidity_per_Flow",
+    "Temp_x_TDS",
+    "Degradation_Index"
+  ]
+}
