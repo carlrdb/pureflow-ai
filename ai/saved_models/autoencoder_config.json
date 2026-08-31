@@ -1,0 +1,11 @@
+{
+  "features": [
+    "TDS (mg/l)",
+    "Turbidity (NTU)",
+    "pH",
+    "Flow Discharge (L/min)"
+  ],
+  "mean_reconstruction_error": 4.4702850258948865e-06,
+  "std_reconstruction_error": 2.2921913360490386e-05,
+  "anomaly_threshold": 7.323602510736604e-05
+}
