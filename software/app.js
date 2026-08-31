@@ -1,4 +1,14 @@
 // ════════════════════════════════
+// CONNECTION CHECK TOGGLE
+// ════════════════════════════════
+// ┌──────────────────────────────────────────────────────────────────┐
+// │  Set to TRUE to SKIP the ESP32 connection check and go          │
+// │  straight to the dashboard (for when you don't have hardware).  │
+// │  Set to FALSE to REQUIRE an ESP32 connection before opening.    │
+// └──────────────────────────────────────────────────────────────────┘
+const SKIP_CONNECTION_CHECK = true;  // ← Change to false when ESP32 is available
+
+// ════════════════════════════════
 // SENSOR DATA
 // ════════════════════════════════
 const SENSORS = [
@@ -320,6 +330,111 @@ async function fetchESP32Data() {
   }
 }
 
-// Ping the ESP32 every 2 seconds
-setInterval(fetchESP32Data, 2000);
-fetchESP32Data();
+// ════════════════════════════════
+// CONNECTION GATE LOGIC
+// ════════════════════════════════
+// This section handles the pre-dashboard connection validation.
+// It pings the ESP32 before allowing access to the dashboard.
+// The SKIP_CONNECTION_CHECK flag at the top of this file controls
+// whether this check is enforced or bypassed.
+
+let dataPollingInterval = null; // Holds the setInterval reference
+
+/**
+ * Removes the connection gate overlay with a smooth fade-out,
+ * then starts the live data polling loop.
+ */
+function dismissGate() {
+  const gate = document.getElementById('connection-gate');
+  if (gate) {
+    gate.classList.add('gate-hidden');
+    // Remove from DOM after the CSS transition completes
+    setTimeout(() => gate.remove(), 600);
+  }
+  // Start the live data loop only after the gate is dismissed
+  startDataPolling();
+}
+
+/**
+ * Starts the repeating ESP32 data fetch (every 2 seconds).
+ */
+function startDataPolling() {
+  if (dataPollingInterval) return; // Don't start twice
+  fetchESP32Data();
+  dataPollingInterval = setInterval(fetchESP32Data, 2000);
+}
+
+/**
+ * Shows a specific gate state panel and hides the others.
+ * @param {'checking'|'failed'|'success'} state
+ */
+function showGateState(state) {
+  document.getElementById('gate-checking').style.display = state === 'checking' ? '' : 'none';
+  document.getElementById('gate-failed').style.display   = state === 'failed'   ? '' : 'none';
+  document.getElementById('gate-success').style.display  = state === 'success'  ? '' : 'none';
+}
+
+/**
+ * Attempts to connect to the ESP32.
+ * On success: shows a brief "Connected" message, then opens the dashboard.
+ * On failure: shows the error state with Retry / Skip buttons.
+ */
+async function attemptConnection() {
+  showGateState('checking');
+
+  try {
+    // Try to fetch data from ESP32 with a 5-second timeout
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    const response = await fetch(`${ESP32_IP}/data`, { signal: controller.signal });
+    clearTimeout(timeout);
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    // Connection successful — show success state briefly
+    showGateState('success');
+    setTimeout(() => dismissGate(), 1200);
+
+  } catch (error) {
+    console.warn('ESP32 connection check failed:', error.message);
+    showGateState('failed');
+  }
+}
+
+/**
+ * Initializes the connection gate on page load.
+ * Decides whether to show the gate or skip straight to the dashboard.
+ */
+function initConnectionGate() {
+  const gate = document.getElementById('connection-gate');
+
+  // Show the target IP in the gate UI
+  const ipLabel = document.getElementById('gate-ip-value');
+  if (ipLabel) ipLabel.textContent = ESP32_IP;
+
+  // ── SKIP MODE ──
+  // When SKIP_CONNECTION_CHECK is true, bypass the gate entirely.
+  // This is useful when you don't have the ESP32 hardware nearby.
+  if (SKIP_CONNECTION_CHECK) {
+    if (gate) gate.remove();
+    startDataPolling();
+    return;
+  }
+
+  // ── VALIDATION MODE ──
+  // Wire up the Retry and Skip buttons
+  document.getElementById('gate-retry-btn').addEventListener('click', () => {
+    attemptConnection();
+  });
+
+  document.getElementById('gate-skip-btn').addEventListener('click', () => {
+    dismissGate();
+  });
+
+  // Start the first connection attempt
+  attemptConnection();
+}
+
+// Launch the gate check on page load
+initConnectionGate();
