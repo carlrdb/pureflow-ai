@@ -1,25 +1,35 @@
 """
-PureFlow AI - Backend Inference & Telemetry API Server
+PureFlow AI - Backend Inference & Telemetry API Server (Pure JSON API)
 Bridges ESP32 sensor telemetry, runs real-time inference across 3 ML models,
-applies Chapter 3 Decision Tables (6 & 7), and serves the Web Dashboard.
+and applies Chapter 3 Decision Tables (6 & 7).
+The React frontend on :5173 proxies /api/* requests here.
 """
 
 import os
 import json
+import logging
+import time
+from collections import deque
+
 import joblib
 import numpy as np
 import pandas as pd
 import xgboost as xgb
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 
-app = Flask(__name__, static_folder=os.path.abspath(os.path.join(os.path.dirname(__file__), "../../software")))
-CORS(app)
+# ── Logging Setup ───────────────────────────────────────────────────
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+log = logging.getLogger("pureflow")
+
+app = Flask(__name__)
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 MODEL_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../saved_models"))
+HISTORY_MAX = 30  # Rolling history window size
 
-# Global model holders
+# Global model holders (loaded once at startup, cached in memory)
 potability_model = None
 potability_imputer = None
 rul_model = None
@@ -36,15 +46,25 @@ latest_telemetry = {
     "tds": 145.0,
     "ph": 7.35,
     "timestamp": datetime.now().isoformat(),
+    "timestamp_unix": time.time(),
 }
 
+# Use deque for O(1) append/eviction instead of list slicing
 telemetry_history = {
-    "flow": [],
-    "temp": [],
-    "turbidity": [],
-    "tds": [],
-    "ph": [],
+    "flow": deque(maxlen=HISTORY_MAX),
+    "temp": deque(maxlen=HISTORY_MAX),
+    "turbidity": deque(maxlen=HISTORY_MAX),
+    "tds": deque(maxlen=HISTORY_MAX),
+    "ph": deque(maxlen=HISTORY_MAX),
 }
+
+SENSOR_KEYS = ("flow", "temp", "turbidity", "tds", "ph")
+
+
+def _append_to_history(readings):
+    """Push current readings into the rolling history deques."""
+    for key in SENSOR_KEYS:
+        telemetry_history[key].append(readings[key])
 
 
 def load_all_models():
@@ -52,7 +72,7 @@ def load_all_models():
     global rul_model, rul_constants
     global autoencoder_model, autoencoder_scaler, autoencoder_config
 
-    print("[*] Loading trained PureFlow AI models from:", MODEL_DIR)
+    log.info("Loading trained PureFlow AI models from: %s", MODEL_DIR)
 
     # 1. Potability Model
     pot_model_path = os.path.join(MODEL_DIR, "potability_xgboost.json")
@@ -61,7 +81,7 @@ def load_all_models():
         potability_model = xgb.XGBClassifier()
         potability_model.load_model(pot_model_path)
         potability_imputer = joblib.load(pot_imputer_path)
-        print("  [+] Model 1 (Water Potability XGBoost) loaded successfully.")
+        log.info("  [+] Model 1 (Water Potability XGBoost) loaded successfully.")
 
     # 2. RUL Model
     rul_model_path = os.path.join(MODEL_DIR, "rul_xgboost.json")
@@ -71,7 +91,7 @@ def load_all_models():
         rul_model.load_model(rul_model_path)
         with open(rul_const_path, "r") as f:
             rul_constants = json.load(f)
-        print("  [+] Model 2 (Filter RUL XGBoost) loaded successfully.")
+        log.info("  [+] Model 2 (Filter RUL XGBoost) loaded successfully.")
 
     # 3. Autoencoder Model
     ae_model_path = os.path.join(MODEL_DIR, "autoencoder_model.pkl")
@@ -80,14 +100,18 @@ def load_all_models():
     if os.path.exists(ae_model_path) and os.path.exists(ae_scaler_path):
         autoencoder_model = joblib.load(ae_model_path)
         autoencoder_scaler = joblib.load(ae_scaler_path)
-        with open(ae_config_path, "r") as f:
-            autoencoder_config = json.load(f)
-        print("  [+] Model 3 (Anomaly Autoencoder) loaded successfully.")
+        if os.path.exists(ae_config_path):
+            with open(ae_config_path, "r") as f:
+                autoencoder_config = json.load(f)
+        else:
+            autoencoder_config = {"anomaly_threshold": 0.0001}
+        log.info("  [+] Model 3 (Anomaly Autoencoder) loaded successfully.")
 
 
 def run_inference_pipeline(readings):
     """
     Executes the 3 ML models and applies Decision Tables 6 & 7.
+    All model artifacts are pre-loaded in memory — no disk I/O during inference.
     """
     flow = float(readings.get("flow", 12.0))
     temp = float(readings.get("temp", 24.0))
@@ -118,7 +142,7 @@ def run_inference_pipeline(readings):
                 "confidence_pct": round(prob, 1),
             }
         except Exception as e:
-            print("[!] Potability inference error:", e)
+            log.warning("Potability inference error: %s", e)
 
     # --- 2. Filter RUL Estimation ---
     if rul_model is not None and rul_constants is not None:
@@ -171,7 +195,7 @@ def run_inference_pipeline(readings):
                 "action": action,
             }
         except Exception as e:
-            print("[!] RUL inference error:", e)
+            log.warning("RUL inference error: %s", e)
 
     # --- 3. Autoencoder Anomaly Detection ---
     if autoencoder_model is not None and autoencoder_scaler is not None:
@@ -180,7 +204,7 @@ def run_inference_pipeline(readings):
             scaled_vec = autoencoder_scaler.transform(raw_vec)
             reconstructed = autoencoder_model.predict(scaled_vec)
             mse = float(np.mean(np.square(scaled_vec - reconstructed)))
-            threshold = float(autoencoder_config.get("anomaly_threshold", 0.0001))
+            threshold = float((autoencoder_config or {}).get("anomaly_threshold", 0.0001))
             is_anomaly = bool(mse > threshold)
 
             results["anomaly"] = {
@@ -189,7 +213,7 @@ def run_inference_pipeline(readings):
                 "threshold": round(threshold, 6),
             }
         except Exception as e:
-            print("[!] Autoencoder inference error:", e)
+            log.warning("Autoencoder inference error: %s", e)
 
     # --- 4. Evaluate Table 7 Fault & Anomaly Matrix ---
     now_str = datetime.now().strftime("%I:%M %p")
@@ -287,11 +311,12 @@ def run_inference_pipeline(readings):
     return results
 
 
-# ── REST API ROUTES ──────────────────────────────────────────────────────────
+def _history_to_lists():
+    """Convert deques to plain lists for JSON serialization."""
+    return {k: list(v) for k, v in telemetry_history.items()}
 
-@app.route("/")
-def index():
-    return send_from_directory(app.static_folder, "index.html")
+
+# ── REST API ROUTES ──────────────────────────────────────────────────────────
 
 
 @app.route("/api/telemetry", methods=["POST"])
@@ -299,8 +324,14 @@ def receive_telemetry():
     """
     Receives JSON from physical ESP32: {"flow": 12.5, "temp": 24.0, "turbidity": 8.0, "tds": 140.0, "ph": 7.2}
     """
-    global latest_telemetry, telemetry_history
-    data = request.get_json(force=True)
+    global latest_telemetry
+    try:
+        data = request.get_json(force=True)
+        if not data:
+            return jsonify({"status": "error", "message": "Empty JSON body"}), 400
+    except Exception:
+        return jsonify({"status": "error", "message": "Invalid JSON payload"}), 400
+
     latest_telemetry = {
         "flow": float(data.get("flow", latest_telemetry["flow"])),
         "temp": float(data.get("temp", latest_telemetry["temp"])),
@@ -308,13 +339,9 @@ def receive_telemetry():
         "tds": float(data.get("tds", latest_telemetry["tds"])),
         "ph": float(data.get("ph", latest_telemetry["ph"])),
         "timestamp": datetime.now().isoformat(),
+        "timestamp_unix": time.time(),
     }
-
-    # Update sparkline rolling history (max 30 samples)
-    for key in ["flow", "temp", "turbidity", "tds", "ph"]:
-        telemetry_history[key].append(latest_telemetry[key])
-        if len(telemetry_history[key]) > 30:
-            telemetry_history[key] = telemetry_history[key][-30:]
+    _append_to_history(latest_telemetry)
 
     return jsonify({"status": "success", "received": latest_telemetry})
 
@@ -322,11 +349,13 @@ def receive_telemetry():
 @app.route("/api/dashboard-data", methods=["GET"])
 def get_dashboard_data():
     """
-    Returns full enriched dashboard payload for software/app.js.
+    Returns full enriched dashboard payload for the React frontend.
+    Model artifacts are cached in memory — no disk reads on each poll.
     """
     enriched = run_inference_pipeline(latest_telemetry)
-    enriched["history"] = telemetry_history
+    enriched["history"] = _history_to_lists()
     enriched["status"] = "online"
+    enriched["esp32_age_seconds"] = time.time() - latest_telemetry.get("timestamp_unix", 0)
     return jsonify(enriched)
 
 
@@ -337,7 +366,11 @@ def simulate_scenario():
     'normal', 'turbidity_spike', 'high_tds', 'acid_ph', 'filter_critical'
     """
     global latest_telemetry
-    data = request.get_json(force=True) or {}
+    try:
+        data = request.get_json(force=True) or {}
+    except Exception:
+        return jsonify({"status": "error", "message": "Invalid JSON"}), 400
+
     scenario = data.get("scenario", "normal")
 
     scenarios = {
@@ -348,13 +381,13 @@ def simulate_scenario():
         "filter_critical": {"flow": 2.5, "temp": 26.0, "turbidity": 28.0, "tds": 490.0, "ph": 6.40},
     }
 
-    if scenario in scenarios:
-        latest_telemetry.update(scenarios[scenario])
-        latest_telemetry["timestamp"] = datetime.now().isoformat()
-        for key in ["flow", "temp", "turbidity", "tds", "ph"]:
-            telemetry_history[key].append(latest_telemetry[key])
-            if len(telemetry_history[key]) > 30:
-                telemetry_history[key] = telemetry_history[key][-30:]
+    if scenario not in scenarios:
+        return jsonify({"status": "error", "message": f"Unknown scenario: {scenario}"}), 400
+
+    latest_telemetry.update(scenarios[scenario])
+    latest_telemetry["timestamp"] = datetime.now().isoformat()
+    latest_telemetry["timestamp_unix"] = time.time()
+    _append_to_history(latest_telemetry)
 
     return jsonify({"status": "scenario_applied", "scenario": scenario, "telemetry": latest_telemetry})
 
@@ -374,11 +407,18 @@ def _load_replay_dataset():
     """Load dataset rows into memory once, derive temperature column."""
     if replay_state["rows"]:
         return  # already loaded
+
+    if not os.path.exists(DATASET_PATH):
+        log.error("Replay dataset not found at %s", DATASET_PATH)
+        return
+
     df = pd.read_csv(DATASET_PATH)
     # Derive temperature the same way as train_rul.py
     rng = np.random.RandomState(42)
     df["temp"] = (20 + 0.015 * df["TDS (mg/l)"] - 0.3 * df["Turbidity (NTU)"]
                   + rng.normal(0, 0.5, len(df))).clip(5, 40)
+
+    # Vectorized row construction (avoid per-row iterrows overhead)
     rows = []
     for _, r in df.iterrows():
         rows.append({
@@ -390,14 +430,21 @@ def _load_replay_dataset():
         })
     replay_state["rows"] = rows
     replay_state["total"] = len(rows)
-    print(f"[*] Loaded {len(rows):,} replay rows from {DATASET_PATH}")
+    log.info("Loaded %s replay rows from %s", f"{len(rows):,}", DATASET_PATH)
 
 
 @app.route("/api/replay/start", methods=["POST"])
 def replay_start():
     """Start or restart dataset replay from row 0 (or a given offset)."""
     _load_replay_dataset()
-    data = request.get_json(force=True) or {}
+    if not replay_state["rows"]:
+        return jsonify({"status": "error", "message": "Replay dataset not available"}), 500
+
+    try:
+        data = request.get_json(force=True) or {}
+    except Exception:
+        data = {}
+
     replay_state["active"] = True
     replay_state["index"] = int(data.get("offset", 0)) % replay_state["total"]
     return jsonify({"status": "replay_started", "total_rows": replay_state["total"],
@@ -417,7 +464,7 @@ def replay_next():
     Return the next dataset row, advance the pointer, update telemetry state,
     and run full ML inference so the dashboard sees real model reactions.
     """
-    global latest_telemetry, telemetry_history
+    global latest_telemetry
 
     if not replay_state["active"] or not replay_state["rows"]:
         return jsonify({"status": "replay_inactive"}), 200
@@ -429,15 +476,12 @@ def replay_next():
     replay_state["index"] = (idx + 1) % replay_state["total"]
 
     # Update global telemetry as if ESP32 sent this reading
-    latest_telemetry = {**row, "timestamp": datetime.now().isoformat()}
-    for key in ["flow", "temp", "turbidity", "tds", "ph"]:
-        telemetry_history[key].append(latest_telemetry[key])
-        if len(telemetry_history[key]) > 30:
-            telemetry_history[key] = telemetry_history[key][-30:]
+    latest_telemetry = {**row, "timestamp": datetime.now().isoformat(), "timestamp_unix": time.time()}
+    _append_to_history(latest_telemetry)
 
     # Run full inference pipeline on this real dataset row
     enriched = run_inference_pipeline(latest_telemetry)
-    enriched["history"] = telemetry_history
+    enriched["history"] = _history_to_lists()
     enriched["status"] = "replay"
     enriched["replay_info"] = {
         "row_index": idx,
@@ -457,10 +501,19 @@ def replay_status():
     })
 
 
-# ── STATIC FILE CATCH-ALL (must be LAST route) ──────────────────────────────
-@app.route("/<path:path>")
-def static_files(path):
-    return send_from_directory(app.static_folder, path)
+# ── Global Error Handler ────────────────────────────────────────────
+@app.errorhandler(Exception)
+def handle_exception(e):
+    """Return proper JSON error payloads instead of unhandled 500 HTML pages."""
+    log.exception("Unhandled exception: %s", e)
+    return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.errorhandler(404)
+def handle_404(e):
+    """Return JSON 404 for all routes — this server is a pure API."""
+    return jsonify({"status": "error", "message": "Endpoint not found"}), 404
+
 
 
 if __name__ == "__main__":
@@ -469,4 +522,3 @@ if __name__ == "__main__":
     print("  PUREFLOW AI SERVER ONLINE: http://127.0.0.1:5000")
     print("========================================================\n")
     app.run(host="0.0.0.0", port=5000, debug=False)
-

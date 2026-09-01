@@ -1,0 +1,87 @@
+@import "tailwindcss";
+
+/* ══════════════════════════════════════════════════════════════════
+   PUREFLOW AI — Tailwind CSS v4 Theme (Design Tokens)
+   Ported from the original style.css :root variables.
+   ══════════════════════════════════════════════════════════════════ */
+
+@theme {
+  /* ── Brand Colors ── */
+  --color-pf-bg:       #04080f;
+  --color-pf-surface:  #0a1220;
+  --color-pf-surface2: #0f1d2e;
+  --color-pf-border:   rgba(99, 179, 237, 0.1);
+  --color-pf-accent:   #38bdf8;
+  --color-pf-accent2:  #0ea5e9;
+  --color-pf-green:    #4ade80;
+  --color-pf-yellow:   #fbbf24;
+  --color-pf-red:      #f87171;
+  --color-pf-text:     #e2eaf4;
+  --color-pf-muted:    #4a6480;
+
+  /* ── Typography ── */
+  --font-display: 'Manrope', sans-serif;
+  --font-mono:    'IBM Plex Mono', monospace;
+  --font-body:    'Manrope', sans-serif;
+
+  /* ── Custom Animations ── */
+  --animate-shimmer: shimmer 1.8s infinite cubic-bezier(0.4, 0, 0.2, 1);
+  --animate-fadeIn:  fadeIn 0.3s ease forwards;
+}
+
+/* ── Keyframes ── */
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Base Styles
+   ══════════════════════════════════════════════════════════════════ */
+
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--color-pf-bg);
+  color: var(--color-pf-text);
+  font-family: var(--font-body);
+  margin: 0;
+}
+
+/* ── Noise Overlay ── */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+  opacity: 0.018;
+  pointer-events: none;
+  z-index: 999;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-pf-surface2); border-radius: 4px; }
+
+/* ── Shimmer utility class ── */
+.animate-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.015) 20%,
+    rgba(56, 189, 248, 0.12) 50%,
+    rgba(255, 255, 255, 0.035) 70%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.8s infinite cubic-bezier(0.4, 0, 0.2, 1);
+}

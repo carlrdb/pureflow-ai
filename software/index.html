@@ -105,9 +105,10 @@
       <div style="font-family: var(--font-mono); font-size: 9px; color: var(--muted); letter-spacing: 2px; text-transform: uppercase; margin-bottom: 6px;">ESP32 Status</div>
       <div
         id="system-status-indicator"
+        class="skeleton-shimmer-text"
         style="font-family: var(--font-mono); font-size: 11px; color: var(--yellow); font-weight: 600;"
       >
-        CONNECTING…
+        CONNECTING TO SENSORS…
       </div>
     </div>
 
@@ -122,6 +123,10 @@
     <header class="topbar">
       <div class="topbar-title" id="page-title">System Overview</div>
       <div class="topbar-right">
+        <!-- Skeleton Demo Toggle -->
+        <button id="skeleton-toggle-btn" class="replay-btn skeleton-btn-off" title="Toggle Skeleton Loading Preview (Press 'S')">
+          SKELETON PREVIEW
+        </button>
         <!-- Dataset Replay Toggle -->
         <button id="replay-toggle-btn" class="replay-btn replay-off" title="Toggle Dataset Replay (mock sensor stream from CSV)">
           REPLAY OFF
@@ -150,26 +155,38 @@
 
         <div class="stat-card">
           <div class="stat-label">System Health</div>
-          <div class="stat-value green" id="health-score">--</div>
-          <div class="stat-sub">Autoencoder Anomaly Score</div>
+          <div class="stat-value green" id="health-score">
+            <span class="skeleton skeleton-value" style="width: 75px; height: 30px; display: inline-block;"></span>
+          </div>
+          <div class="stat-sub" id="health-sub">Autoencoder Anomaly Score</div>
         </div>
 
         <div class="stat-card">
           <div class="stat-label">Water Potability</div>
-          <div class="stat-value green" id="home-potability-badge">POTABLE</div>
-          <div class="stat-sub" id="home-potability-sub">PNSDW 2017 Compliant</div>
+          <div class="stat-value green" id="home-potability-badge">
+            <span class="skeleton skeleton-value skeleton-badge" style="width: 115px; height: 28px; display: inline-block;"></span>
+          </div>
+          <div class="stat-sub" id="home-potability-sub">
+            <span class="skeleton skeleton-text" style="width: 130px; height: 11px; display: inline-block;"></span>
+          </div>
         </div>
 
         <div class="stat-card">
           <div class="stat-label">Filter Life (RUL)</div>
-          <div class="stat-value accent" id="home-filter-rul">--</div>
-          <div class="stat-sub" id="home-filter-state">XGBoost Forecast</div>
+          <div class="stat-value accent" id="home-filter-rul">
+            <span class="skeleton skeleton-value" style="width: 90px; height: 30px; display: inline-block;"></span>
+          </div>
+          <div class="stat-sub" id="home-filter-state">
+            <span class="skeleton skeleton-text" style="width: 115px; height: 11px; display: inline-block;"></span>
+          </div>
         </div>
 
         <div class="stat-card">
           <div class="stat-label">Active Alerts</div>
-          <div class="stat-value red" id="home-alerts">0</div>
-          <div class="stat-sub">Requires attention</div>
+          <div class="stat-value red" id="home-alerts">
+            <span class="skeleton skeleton-value" style="width: 36px; height: 30px; display: inline-block;"></span>
+          </div>
+          <div class="stat-sub" id="home-alerts-sub">Requires attention</div>
         </div>
 
       </div>
@@ -225,25 +242,35 @@
       <div class="sys-banner">
         <div class="sys-banner-left">
           <div class="sys-banner-label">Overall System Health</div>
-          <div class="sys-banner-score green" id="sys-health-pct">--</div>
+          <div class="sys-banner-score green" id="sys-health-pct">
+            <span class="skeleton skeleton-value" style="width: 85px; height: 36px; display: inline-block;"></span>
+          </div>
           <div class="sys-banner-note">Based on current sensor readings and AI model output</div>
         </div>
         <div class="sys-banner-grid">
           <div class="sys-banner-cell">
             <div class="sys-banner-cell-label">Filter RUL</div>
-            <div class="sys-banner-cell-val accent" id="maint-rul-val">-- days</div>
+            <div class="sys-banner-cell-val accent" id="maint-rul-val">
+              <span class="skeleton skeleton-text" style="width: 75px; height: 16px; display: inline-block;"></span>
+            </div>
           </div>
           <div class="sys-banner-cell">
             <div class="sys-banner-cell-label">Water Potable</div>
-            <div class="sys-banner-cell-val green" id="maint-potable-val">--</div>
+            <div class="sys-banner-cell-val green" id="maint-potable-val">
+              <span class="skeleton skeleton-text" style="width: 70px; height: 16px; display: inline-block;"></span>
+            </div>
           </div>
           <div class="sys-banner-cell">
             <div class="sys-banner-cell-label">Health State</div>
-            <div class="sys-banner-cell-val accent" id="maint-health-state">Normal</div>
+            <div class="sys-banner-cell-val accent" id="maint-health-state">
+              <span class="skeleton skeleton-text" style="width: 65px; height: 16px; display: inline-block;"></span>
+            </div>
           </div>
           <div class="sys-banner-cell">
             <div class="sys-banner-cell-label">Next Service</div>
-            <div class="sys-banner-cell-val" id="maint-next-service">--</div>
+            <div class="sys-banner-cell-val" id="maint-next-service">
+              <span class="skeleton skeleton-text" style="width: 80px; height: 16px; display: inline-block;"></span>
+            </div>
           </div>
         </div>
       </div>
